@@ -25,9 +25,13 @@ func configure(in *os.File, out *os.File) error {
 	if err != nil {
 		return err
 	}
-	cfg := config.Config{Provider: "lmstudio", BaseURL: "http://localhost:1234", DefaultModel: "", ReuseLoadedModel: true, DisableThinking: true, Shell: history.DetectShell()}
+	cfg := config.Config{Provider: "lmstudio", BaseURL: config.DefaultBaseURL("lmstudio"), ReuseLoadedModel: true, DisableThinking: true, Shell: history.DetectShell()}
 	if data, e := os.ReadFile(path); e == nil {
-		_ = yaml.Unmarshal(data, &cfg)
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("parse existing config: %w", err)
+		}
+	} else if !os.IsNotExist(e) {
+		return fmt.Errorf("read existing config: %w", e)
 	}
 	reader := bufio.NewReader(in)
 	ask := func(label, def string) (string, error) {
@@ -51,13 +55,19 @@ func configure(in *os.File, out *os.File) error {
 	if e != nil {
 		return e
 	}
-	cfg.Provider = provider
+	provider = strings.ToLower(provider)
+	switchProvider(&cfg, provider)
+	base, e := ask("Provider base URL", cfg.BaseURL)
+	if e != nil {
+		return e
+	}
+	cfg.BaseURL = base
+	providerType := "cloud"
 	if cfg.IsLocal() {
-		base, e := ask("Provider base URL", cfg.BaseURL)
-		if e != nil {
-			return e
-		}
-		cfg.BaseURL = base
+		providerType = "local"
+	}
+	fmt.Fprintf(out, "Provider type: %s. History context will be sent to %s at %s.\n", providerType, cfg.Provider, cfg.BaseURL)
+	if cfg.IsLocal() {
 		model, e := ask("Default model", cfg.DefaultModel)
 		if e != nil {
 			return e
@@ -69,8 +79,9 @@ func configure(in *os.File, out *os.File) error {
 			return e
 		}
 		cfg.Model = model
-		envName := map[string]string{"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY", "openrouter": "OPENROUTER_API_KEY", "grok": "XAI_API_KEY"}[cfg.Provider]
-		if os.Getenv(envName) == "" {
+	}
+	if envName := config.APIKeyEnvironment(cfg.Provider); envName != "" && os.Getenv(envName) == "" {
+		if cfg.Provider != "ollama" {
 			fmt.Fprintf(out, "%s (leave empty to set later through the environment): ", envName)
 			fmt.Fprint(out, "[hidden] ")
 			key, e := term.ReadPassword(int(in.Fd()))
@@ -90,12 +101,8 @@ func configure(in *os.File, out *os.File) error {
 		return e
 	}
 	cfg.HistoryFile = historyPath
-	if cfg.IsLocal() {
-		if e := cfg.Validate(); e != nil {
-			return e
-		}
-	} else if cfg.Model == "" {
-		return fmt.Errorf("model is required for %s", cfg.Provider)
+	if e := cfg.ValidateForConfigure(); e != nil {
+		return e
 	}
 	data, e := yaml.Marshal(&cfg)
 	if e != nil {
@@ -132,4 +139,15 @@ func configure(in *os.File, out *os.File) error {
 	fmt.Fprintln(out, "Configuration saved to", path)
 	return nil
 }
+
+func switchProvider(cfg *config.Config, provider string) {
+	if provider != cfg.Provider {
+		cfg.APIKey = ""
+		cfg.BaseURL = config.DefaultBaseURL(provider)
+		cfg.Model = ""
+		cfg.DefaultModel = ""
+	}
+	cfg.Provider = provider
+}
+
 func init() { rootCmd.AddCommand(configureCmd) }

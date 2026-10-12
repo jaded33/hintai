@@ -23,6 +23,22 @@ type OllamaClient struct {
 	disableThinking bool
 }
 
+type ollamaRequest struct {
+	Model    string        `json:"model"`
+	Messages []chatMessage `json:"messages"`
+	Stream   bool          `json:"stream"`
+	Think    *bool         `json:"think,omitempty"`
+	Options  struct {
+		NumPredict int `json:"num_predict"`
+	} `json:"options"`
+}
+
+type ollamaResponse struct {
+	Message struct {
+		Content string `json:"content"`
+	} `json:"message"`
+}
+
 // NewOllamaClient creates a new Ollama client.
 func NewOllamaClient(ctx context.Context, logger *zap.Logger, baseURL, model string, disableThinking bool) (*OllamaClient, error) {
 	c := &OllamaClient{
@@ -56,8 +72,8 @@ func (c *OllamaClient) FindHistoryEntries(ctx context.Context, query string, his
 }
 
 // SuggestCommands implements LLMClient.
-func (c *OllamaClient) SuggestCommands(ctx context.Context, taskDescription string, historyContext []history.HistoryEntry) (string, error) {
-	prompt := buildSuggestPromptText(taskDescription, historyContext)
+func (c *OllamaClient) SuggestCommands(ctx context.Context, taskDescription, shell string, historyContext []history.HistoryEntry) (string, error) {
+	prompt := buildSuggestPromptText(taskDescription, shell, historyContext)
 	result, err := c.chat(ctx, prompt)
 	if err != nil {
 		return "", fmt.Errorf("ollama API call failed (Suggest): %w", err)
@@ -68,21 +84,24 @@ func (c *OllamaClient) SuggestCommands(ctx context.Context, taskDescription stri
 	return result, nil
 }
 
-// chat sends a prompt to Ollama's OpenAI-compatible endpoint.
+// chat sends a prompt to Ollama's native chat endpoint.
 func (c *OllamaClient) chat(ctx context.Context, prompt string) (string, error) {
-	reqBody := chatRequest{
-		Model:     c.model,
-		MaxTokens: 1024,
-		Messages: []chatMessage{
-			{Role: "user", Content: prompt},
-		},
+	reqBody := ollamaRequest{
+		Model:    c.model,
+		Messages: []chatMessage{{Role: "user", Content: prompt}},
+		Stream:   false,
+	}
+	reqBody.Options.NumPredict = 1024
+	if c.disableThinking {
+		think := false
+		reqBody.Think = &think
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/chat/completions", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(c.baseURL, "/")+"/api/chat", bytes.NewBuffer(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -93,21 +112,17 @@ func (c *OllamaClient) chat(ctx context.Context, prompt string) (string, error) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Ollama returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxProviderResponseBytes))
+		return "", fmt.Errorf("Ollama returned status %d: %s", resp.StatusCode, boundedErrorBody(bodyBytes))
 	}
 
-	var chatResp chatResponse
+	var chatResp ollamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if len(chatResp.Choices) == 0 {
-		return "", nil
-	}
-
-	result := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	result := strings.TrimSpace(chatResp.Message.Content)
 	if c.disableThinking {
 		result = stripThinkingTags(result)
 	}

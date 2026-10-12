@@ -16,17 +16,19 @@ import (
 )
 
 const (
-	modelLoadTimeout = 30 * time.Second
-	requestTimeout   = 60 * time.Second
+	modelOperationTimeout = 10 * time.Minute
+	requestTimeout        = 60 * time.Second
 )
 
 // LMStudioClient implements the LLMClient interface using a local LM Studio server.
 type LMStudioClient struct {
 	logger          *zap.Logger
 	httpClient      *http.Client
+	modelHTTPClient *http.Client
 	baseURL         string
 	model           string
 	disableThinking bool
+	apiKey          string
 }
 
 // chatRequest is the JSON body for /v1/chat/completions
@@ -57,17 +59,23 @@ type loadModelRequest struct {
 }
 
 // NewLMStudioClient creates a new LM Studio client and ensures the model is loaded.
-func NewLMStudioClient(ctx context.Context, logger *zap.Logger, baseURL, defaultModel string, reuseLoaded, disableThinking bool) (*LMStudioClient, error) {
+func NewLMStudioClient(ctx context.Context, logger *zap.Logger, baseURL, defaultModel string, reuseLoaded, disableThinking bool, apiKey string) (*LMStudioClient, error) {
 	c := &LMStudioClient{
 		logger:          logger,
 		httpClient:      &http.Client{Timeout: requestTimeout},
+		modelHTTPClient: &http.Client{Timeout: modelOperationTimeout},
 		baseURL:         baseURL,
 		model:           defaultModel,
 		disableThinking: disableThinking,
+		apiKey:          apiKey,
 	}
 
 	if reuseLoaded {
-		if active := c.getActiveModel(ctx); active != "" {
+		active, err := c.getActiveModel(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if active != "" {
 			c.logger.Info("Using already-loaded model", zap.String("model", active))
 			c.model = active
 			return c, nil
@@ -84,20 +92,21 @@ func NewLMStudioClient(ctx context.Context, logger *zap.Logger, baseURL, default
 	return c, nil
 }
 
-// getActiveModel sends a minimal test request to LM Studio.
-// Returns the model ID that responded, or "" if nothing is loaded.
-func (c *LMStudioClient) getActiveModel(ctx context.Context) string {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/models", nil)
+// getActiveModel lists loaded LM Studio models and returns a text model ID.
+func (c *LMStudioClient) getActiveModel(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(c.baseURL, "/")+"/api/v1/models", nil)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	resp, err := c.httpClient.Do(req)
+	c.setAuth(req)
+	resp, err := c.modelHTTPClient.Do(req)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("LM Studio model list request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProviderResponseBytes))
+		return "", fmt.Errorf("LM Studio model list returned status %d: %s", resp.StatusCode, boundedErrorBody(body))
 	}
 	var data struct {
 		Models []struct {
@@ -108,8 +117,8 @@ func (c *LMStudioClient) getActiveModel(ctx context.Context) string {
 			} `json:"loaded_instances"`
 		} `json:"models"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&data) != nil {
-		return ""
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxProviderResponseBytes)).Decode(&data); err != nil {
+		return "", fmt.Errorf("decode LM Studio model list: %w", err)
 	}
 	fallback := ""
 	for _, m := range data.Models {
@@ -121,13 +130,13 @@ func (c *LMStudioClient) getActiveModel(ctx context.Context) string {
 			id = m.Key
 		}
 		if id == c.model || m.Key == c.model {
-			return id
+			return id, nil
 		}
 		if fallback == "" {
 			fallback = id
 		}
 	}
-	return fallback
+	return fallback, nil
 }
 
 // loadModel calls LM Studio to load the configured default model into memory.
@@ -137,20 +146,21 @@ func (c *LMStudioClient) loadModel(ctx context.Context) error {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/models/load", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(c.baseURL, "/")+"/api/v1/models/load", bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.setAuth(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.modelHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("LM Studio model load request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("LM Studio model load returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxProviderResponseBytes))
+		return fmt.Errorf("LM Studio model load returned status %d: %s", resp.StatusCode, boundedErrorBody(bodyBytes))
 	}
 	return nil
 }
@@ -178,8 +188,8 @@ func (c *LMStudioClient) FindHistoryEntries(ctx context.Context, query string, h
 }
 
 // SuggestCommands implements LLMClient.
-func (c *LMStudioClient) SuggestCommands(ctx context.Context, taskDescription string, historyContext []history.HistoryEntry) (string, error) {
-	prompt := buildSuggestPromptText(taskDescription, historyContext)
+func (c *LMStudioClient) SuggestCommands(ctx context.Context, taskDescription, shell string, historyContext []history.HistoryEntry) (string, error) {
+	prompt := buildSuggestPromptText(taskDescription, shell, historyContext)
 	result, err := c.chat(ctx, prompt)
 	if err != nil {
 		c.logger.Error("LM Studio call failed for SuggestCommands", zap.Error(err))
@@ -206,11 +216,12 @@ func (c *LMStudioClient) chat(ctx context.Context, prompt string) (string, error
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/chat/completions", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(c.baseURL, "/")+"/v1/chat/completions", bytes.NewBuffer(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.setAuth(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
@@ -218,8 +229,8 @@ func (c *LMStudioClient) chat(ctx context.Context, prompt string) (string, error
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("LM Studio returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxProviderResponseBytes))
+		return "", fmt.Errorf("LM Studio returned status %d: %s", resp.StatusCode, boundedErrorBody(bodyBytes))
 	}
 
 	var chatResp chatResponse
@@ -235,6 +246,12 @@ func (c *LMStudioClient) chat(ctx context.Context, prompt string) (string, error
 		result = stripThinkingTags(result)
 	}
 	return result, nil
+}
+
+func (c *LMStudioClient) setAuth(req *http.Request) {
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 }
 
 // stripThinkingTags removes <think>...</think> and similar reasoning blocks from LLM output.

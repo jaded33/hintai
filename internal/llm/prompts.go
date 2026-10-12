@@ -26,7 +26,10 @@ func buildFindPromptText(query string, historyContext []history.HistoryEntry) st
 }
 
 // buildSuggestPromptText constructs the prompt for suggesting commands.
-func buildSuggestPromptText(taskDescription string, historyContext []history.HistoryEntry) string {
+func buildSuggestPromptText(taskDescription, shell string, historyContext []history.HistoryEntry) string {
+	if shell == "" {
+		shell = history.DetectShell()
+	}
 	var b strings.Builder
 
 	osHint := "macOS (BSD userland)"
@@ -34,7 +37,8 @@ func buildSuggestPromptText(taskDescription string, historyContext []history.His
 		osHint = "Linux (GNU userland)"
 	}
 
-	b.WriteString(fmt.Sprintf("You are an AI assistant expert in generating safe shell commands for %s.\n", osHint))
+	b.WriteString(fmt.Sprintf("You are an AI assistant expert in generating safe commands for %s using %s syntax.\n", osHint, shell))
+	b.WriteString(fmt.Sprintf("The user runs the %s shell. Use syntax and built-ins compatible with %s.\n", shell, shell))
 	if runtime.GOOS == "darwin" {
 		b.WriteString("IMPORTANT: This is macOS. Use BSD-compatible commands. 'find' does not support -printf or -println — use -print instead.\n")
 	}

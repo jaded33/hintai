@@ -87,3 +87,42 @@ func TestEmptyAndMissingHistory(t *testing.T) {
 		t.Fatal("missing history file should fail")
 	}
 }
+
+func TestDefaultHistoryPathsRespectShellEnvironment(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HISTFILE", "~/history/custom-shell-history")
+	for _, shell := range []string{"zsh", "bash"} {
+		got, err := DefaultPath(shell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := filepath.Join(home, "history", "custom-shell-history")
+		if got != want {
+			t.Fatalf("%s path = %q, want %q", shell, got, want)
+		}
+	}
+	dataHome := filepath.Join(home, "custom-data")
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	t.Setenv("HISTFILE", "")
+	got, err := DefaultPath("fish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dataHome, "fish", "fish_history")
+	if got != want {
+		t.Fatalf("fish path = %q, want %q", got, want)
+	}
+}
+
+func TestCustomHistoryPathExpandsHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	r, err := NewReader("bash", "~/history.txt", zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, "history.txt"); r.path != want {
+		t.Fatalf("path = %q, want %q", r.path, want)
+	}
+}

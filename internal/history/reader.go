@@ -35,13 +35,22 @@ func DefaultPath(shell string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if shell != "fish" {
+		if path := os.Getenv("HISTFILE"); path != "" {
+			return expandHome(path, home), nil
+		}
+	}
 	switch shell {
 	case "zsh":
 		return filepath.Join(home, ".zsh_history"), nil
 	case "bash":
 		return filepath.Join(home, ".bash_history"), nil
 	case "fish":
-		return filepath.Join(home, ".local", "share", "fish", "fish_history"), nil
+		dataHome := os.Getenv("XDG_DATA_HOME")
+		if !filepath.IsAbs(dataHome) {
+			dataHome = filepath.Join(home, ".local", "share")
+		}
+		return filepath.Join(dataHome, "fish", "fish_history"), nil
 	default:
 		return "", fmt.Errorf("unsupported shell %q (choose zsh, bash, or fish)", shell)
 	}
@@ -60,8 +69,24 @@ func NewReader(shell, path string, logger *zap.Logger) (*Reader, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		path = expandHome(path, home)
 	}
 	return &Reader{path: path, shell: shell, logger: logger}, nil
+}
+
+func expandHome(path, home string) string {
+	if path == "~" {
+		return home
+	}
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(home, path[2:])
+	}
+	return path
 }
 
 func (r *Reader) ReadHistory(limit int) ([]HistoryEntry, error) {

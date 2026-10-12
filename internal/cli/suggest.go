@@ -42,11 +42,14 @@ func runSuggestCore(ctx context.Context, logger *zap.Logger, query string, limit
 	if err != nil {
 		return "", err
 	}
+	if shell == "" {
+		shell = cfg.Shell
+	}
+	if shell == "" {
+		shell = history.DetectShell()
+	}
 	entries := []history.HistoryEntry{}
 	if !noHistory {
-		if shell == "" {
-			shell = cfg.Shell
-		}
 		if path == "" {
 			path = cfg.HistoryFile
 		}
@@ -64,7 +67,7 @@ func runSuggestCore(ctx context.Context, logger *zap.Logger, query string, limit
 		return "", err
 	}
 	defer client.Close()
-	result, err := client.SuggestCommands(ctx, query, entries)
+	result, err := client.SuggestCommands(ctx, query, shell, entries)
 	if err != nil {
 		return "", err
 	}

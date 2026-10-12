@@ -7,6 +7,6 @@ import (
 
 type LLMClient interface {
 	FindHistoryEntries(context.Context, string, []history.HistoryEntry) (string, error)
-	SuggestCommands(context.Context, string, []history.HistoryEntry) (string, error)
+	SuggestCommands(context.Context, string, string, []history.HistoryEntry) (string, error)
 	Close() error
 }

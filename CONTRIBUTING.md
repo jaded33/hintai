@@ -4,7 +4,7 @@ Thanks for helping improve HintAI. Open an issue for larger changes, then submit
 
 ## Development
 
-Requirements: Go 1.23 or newer and Git.
+Requirements: Go 1.26 or newer and Git. The `go` tool uses the patched Go 1.26 toolchain declared in `go.mod` when needed.
 
     git clone https://github.com/jaded33/hintai.git
     cd hintai
@@ -21,4 +21,4 @@ History-reader tests use synthetic fixtures. Do not include personal shell histo
 - Update README or sample configuration when commands or settings change.
 - Never commit credentials or personal history.
 
-GitHub Actions checks formatting, tests, vet, and cross-platform builds.
+GitHub Actions checks formatting, tests, vet, cross-platform builds, and scans the repository history for secrets.

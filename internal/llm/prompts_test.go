@@ -25,3 +25,10 @@ func TestFindPromptIncludesAllEntries(t *testing.T) {
 		t.Fatal("history was capped before it reached the prompt")
 	}
 }
+
+func TestSuggestPromptTargetsSelectedShell(t *testing.T) {
+	prompt := buildSuggestPromptText("find files", "fish", nil)
+	if !strings.Contains(prompt, "fish syntax") || !strings.Contains(prompt, "The user runs the fish shell") {
+		t.Fatalf("prompt does not target Fish: %s", prompt)
+	}
+}
