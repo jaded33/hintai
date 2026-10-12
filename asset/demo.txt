@@ -1,0 +1,9 @@
+HintAI example — synthetic shell history
+
+$ hintai find "show the Git working tree status"
+git status --short
+
+$ hintai suggest --no-history-context "print hello world"
+printf 'Hello, world\n'
+
+These are illustrative results for synthetic history. Suggestions vary by model.

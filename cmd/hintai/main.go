@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sanspareilsmyn/historai/internal/cli"
+	"github.com/jaded33/hintai/internal/cli"
 )
 
 func main() {

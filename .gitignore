@@ -1,0 +1,8 @@
+/hintai
+/hintai-*
+/dist/
+*.test
+coverage.out
+config.yaml
+*.cast
+.DS_Store

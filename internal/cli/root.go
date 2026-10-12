@@ -2,54 +2,44 @@ package cli
 
 import (
 	"fmt"
+
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
+var version = "dev"
 var (
-	logger *zap.Logger
-
-	// Flag variable to store the value of the --debug flag.
+	logger    *zap.Logger
 	debugMode bool
-
-	// rootCmd represents the base command when called without any subcommands
-	rootCmd = &cobra.Command{
-		Use:   "historai",
-		Short: "An AI-powered CLI tool to find/suggest commands based on shell history.",
-		Long: `historai helps you search your shell command history
-or get command suggestions using natural language queries powered by LLM APIs.
-Find or discover commands based on what they do, not just keywords.`,
+	rootCmd   = &cobra.Command{
+		Use:          "hintai",
+		Version:      version,
+		Short:        "Find and suggest shell commands using AI.",
+		Long:         "HintAI searches shell history and suggests commands using a configured local or cloud language model.",
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			var err error
-			var zapConfig zap.Config
+			if cmd.Name() == "version" {
+				return nil
+			}
+			var cfg zap.Config
 			if debugMode {
-				zapConfig = zap.NewDevelopmentConfig()
+				cfg = zap.NewDevelopmentConfig()
 			} else {
-				zapConfig = zap.NewProductionConfig()
-				zapConfig.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+				cfg = zap.NewProductionConfig()
+				cfg.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
 			}
-
-			logger, err = zapConfig.Build()
+			var err error
+			logger, err = cfg.Build()
 			if err != nil {
-				return fmt.Errorf("critical: Failed to initialize logger: %w", err)
+				return fmt.Errorf("initialize logger: %w", err)
 			}
-
-			logger.Debug("Debug logging enabled.")
-			logger.Debug("Logger initialized successfully.")
-
 			return nil
 		},
 	}
 )
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-func Execute() error {
-	err := rootCmd.Execute()
-	return err
-}
-
-// init is called when the package is imported.
+func Execute() error { return rootCmd.Execute() }
 func init() {
+	rootCmd.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(cmd *cobra.Command, args []string) { fmt.Fprintln(cmd.OutOrStdout(), version) }})
 	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", false, "Enable debug logging")
 }

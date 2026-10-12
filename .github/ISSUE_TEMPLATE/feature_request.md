@@ -1,23 +1,14 @@
 ---
-name: ✨ Feature Request
-about: Suggest an idea for this project
-title: "[FEAT] "
-labels: enhancement, feature-request
-assignees: ''
-
+name: Feature request
+about: Suggest an improvement to HintAI
+title: "[Feature] "
+labels: enhancement
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. "I'm always frustrated when..."
+## Problem or use case
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+## Proposed behavior
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+## Alternatives considered
 
-**Why is this feature needed? What is the benefit?**
-Explain the motivation and the value this feature would bring to FeatureLens and its users.
-
-**Additional context**
-Add any other context or screenshots about the feature request here.
+Do not include personal shell history, credentials, or private configuration.

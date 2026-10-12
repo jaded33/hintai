@@ -1,0 +1,20 @@
+# Copy to ~/.config/hintai/config.yaml or run hintai configure.
+# Prefer provider-specific API key environment variables. The legacy api_key
+# field remains supported as a fallback.
+provider: lmstudio
+base_url: http://localhost:1234
+default_model: your-downloaded-model-id
+reuse_loaded_model: true
+disable_thinking: true
+
+# provider: ollama
+# base_url: http://localhost:11434
+# default_model: your-downloaded-model-id
+
+# provider: openai # or anthropic, gemini, openrouter, grok
+# model: gpt-4o-mini
+# api_key: optional fallback; prefer an environment variable
+
+# Optional overrides
+# shell: zsh
+# history_file: /path/to/history

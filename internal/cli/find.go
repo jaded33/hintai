@@ -2,133 +2,77 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"github.com/sanspareilsmyn/historai/internal/config"
-	"github.com/sanspareilsmyn/historai/internal/history"
-	"github.com/sanspareilsmyn/historai/internal/llm"
+
+	"github.com/jaded33/hintai/internal/config"
+	"github.com/jaded33/hintai/internal/history"
+	"github.com/jaded33/hintai/internal/llm"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
-const (
-	defaultFindHistoryLimit = 300
-)
+const defaultFindHistoryLimit = 300
 
-// findCmd represents the find command
 var findCmd = &cobra.Command{
 	Use:   "find \"<natural language query>\"",
 	Short: "Find commands in shell history using a natural language query",
-	Long: `Searches your shell history file (currently Zsh: ~/.zsh_history) using an LLM
-to find commands that match the provided natural language description.
-
-You can limit the scope of the history search using the flag:
-  --limit / -n : How many recent entries to consider (default: 300).
-
-Example:
-  historai find "how I listed files sorted by size last month"
-  historai find --limit 500 "the ssh command to connect to the webserver"`,
-	Args: cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logger.Debug("Executing find command")
-
-		query := args[0]
-		if query == "" {
-			return errors.New("query cannot be empty")
+		q := args[0]
+		if q == "" {
+			return fmt.Errorf("query cannot be empty")
 		}
-		logger.Debug("Received query", zap.String("query", query))
-
-		// 1. Parse and validate flags
-		limit, err := parseFindFlags(cmd)
+		limit, _ := cmd.Flags().GetInt("limit")
+		shell, _ := cmd.Flags().GetString("shell")
+		path, _ := cmd.Flags().GetString("history-file")
+		result, err := runFind(cmd.Context(), logger, q, limit, shell, path)
 		if err != nil {
 			return err
 		}
-
-		// 2. Execute the core finding logic
-		result, err := runFind(logger, query, limit)
-		if err != nil {
-			return err
-		}
-
-		// 3. Print Header to Stderr & Result to Stdout
-		err = printCommandOutput(
-			logger,
-			result,
-			"--- Found Commands ---",
-			"No relevant commands found or response indicates failure.",
-		)
-		if err != nil {
-			return err
-		}
-
-		return nil
+		return printCommandOutput(logger, result, "--- Found Commands ---", "No matching history entries found.")
 	},
 }
 
-// parseFindFlags extracts and validates flags specific to the find command.
-func parseFindFlags(cmd *cobra.Command) (limit int, err error) {
-	limit, err = cmd.Flags().GetInt("limit")
-	if err != nil {
-		logger.Error("Failed to get 'limit' flag value", zap.Error(err))
-		err = fmt.Errorf("internal error getting limit flag: %w", err)
-		return
+func runFind(ctx context.Context, logger *zap.Logger, query string, limit int, shell, path string) (string, error) {
+	if limit < 0 {
+		return "", fmt.Errorf("history limit cannot be negative")
 	}
-	return limit, nil
-}
-
-// runFind executes the main logic: config, history, LLM interaction.
-func runFind(logger *zap.Logger, query string, limit int) (string, error) {
-	// 1. Load Configuration
-	logger.Debug("Loading configuration...")
 	cfg, err := config.LoadConfig(logger)
 	if err != nil {
-		return "", fmt.Errorf("failed to load configuration: %w", err)
+		return "", err
 	}
-	logger.Debug("Configuration loaded successfully")
-
-	// 2. Read Shell History
-	// TODO: Replace with a factory when supporting multiple shells!!
-	historyReader, err := history.NewZshHistoryReader(logger)
+	if shell == "" {
+		shell = cfg.Shell
+	}
+	if path == "" {
+		path = cfg.HistoryFile
+	}
+	reader, err := history.NewReader(shell, path, logger)
 	if err != nil {
-		return "", fmt.Errorf("failed to initialize history reader: %w", err)
+		return "", err
 	}
-
-	historyEntries, err := historyReader.ReadHistory(limit)
+	entries, err := reader.ReadHistory(limit)
 	if err != nil {
-		return "", fmt.Errorf("failed to read history: %w", err)
+		return "", err
 	}
-	logger.Debug("History read successfully", zap.Int("entries_count", len(historyEntries)))
-
-	// 3. Initialize LLM Client
-	ctx := context.Background()
-	logger.Debug("Initializing LLM client...")
-	// TODO: Add support for other LLMs!!
-	llmClient, err := llm.NewGeminiClient(ctx, logger, cfg.GoogleAPIKey)
+	client, err := llm.NewClientFromConfig(ctx, logger, cfg)
 	if err != nil {
-		return "", fmt.Errorf("failed to initialize LLM client: %w", err)
+		return "", err
 	}
-	defer func() {
-		logger.Debug("Closing LLM client...")
-		if closeErr := llmClient.Close(); closeErr != nil {
-			logger.Error("Failed to close LLM client", zap.Error(closeErr))
-		}
-	}()
-	logger.Debug("LLM client initialized successfully")
-
-	// 4. Call LLM API
-	logger.Debug("Sending query and history context to LLM...", zap.Int("history_context_size", len(historyEntries)))
-	result, err := llmClient.FindHistoryEntries(query, historyEntries)
+	defer client.Close()
+	result, err := client.FindHistoryEntries(ctx, query, entries)
 	if err != nil {
-		return "", fmt.Errorf("failed to get results from LLM: %w", err)
+		return "", err
 	}
-	logger.Debug("Received response from LLM")
-
+	if result == "" {
+		return "(No relevant commands found)", nil
+	}
 	return result, nil
 }
 
-// init adds the findCmd and its flags to the rootCmd.
 func init() {
 	rootCmd.AddCommand(findCmd)
-
-	findCmd.Flags().IntP("limit", "n", defaultFindHistoryLimit, "Limit the number of most recent history entries to analyze")
+	findCmd.Flags().IntP("limit", "n", defaultFindHistoryLimit, "Number of recent history entries (0 means all)")
+	findCmd.Flags().String("shell", "", "History shell: zsh, bash, or fish (auto-detected by default)")
+	findCmd.Flags().String("history-file", "", "Use this history file instead of the shell default")
 }

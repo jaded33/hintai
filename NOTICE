@@ -1,0 +1,6 @@
+HintAI includes and modifies work from historai by sanspareilsmyn.
+The upstream project is available at https://github.com/sanspareilsmyn/historai
+and is licensed under the Apache License, Version 2.0. See LICENSE.
+
+HintAI-specific changes include configurable local and cloud LLM providers,
+interactive setup, and Zsh, Bash, and Fish history support.
